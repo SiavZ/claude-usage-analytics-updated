@@ -263,10 +263,10 @@ async function activate(context) {
             cancellable: false
         }, () => {
             return new Promise((resolve) => {
-                // Use 'node' from system PATH. Note: process.execPath returns Code.exe
-                // in VS Code's extension host, not Node.js, so we must use PATH lookup.
-                // Users need Node.js installed (standard for VS Code extension users).
-                const nodePath = 'node';
+                // Resolve Node.js binary: try 'node' sibling of process.execPath, then PATH fallback
+                const execDir = require('path').dirname(process.execPath);
+                const siblingNode = require('path').join(execDir, 'node');
+                const nodePath = require('fs').existsSync(siblingNode) ? siblingNode : 'node';
                 execFile(nodePath, [scriptPath], { timeout: 30000 }, (error, stdout, stderr) => {
                     if (error) {
                         vscode.window.showErrorMessage(`Scan failed: ${error.message}`);

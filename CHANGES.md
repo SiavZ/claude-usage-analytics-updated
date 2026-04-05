@@ -31,3 +31,13 @@ This is a modified fork of [claude-usage-analytics](https://github.com/AnalyticE
   - Hour-of-day activity counts for peak hour / night owl / early bird scores
 
   The original extension only populated these fields via the Python backfill script (`backfill_claude_export.py`) which requires a Claude.ai data export. This new script extracts the same data directly from Claude Code's local JSONL files.
+
+### Streak & Forge CLI Integration
+
+- **Fixed streak calculation** — live stats (from JSONL scan) now correctly add today to `daysWithActivity`, and today is added to `dailyHistory` if missing. Previously the streak could show 0 even when actively using Claude Code today.
+- **Added Forge CLI support** — new `tools/extract-forge-dates.py` reads Forge's SQLite DB (`~/forge/.forge.db`) and exports active dates to `~/.claude/forge-active-dates.json`. The extension merges these into `daysWithActivity` so days where only Forge was used still count toward the streak.
+
+### Bug Fixes
+
+- **Fixed scan-today.js node path** — `extension.js` used bare `'node'` which isn't available in VS Code's remote extension host PATH. Now resolves the `node` binary from the same directory as `process.execPath`.
+- **Fixed broken emoji** — replaced `🪙` (Unicode 13.0 coin emoji, often broken on Linux servers) with `🔢` (widely supported) in status bar tooltips and dashboard toggle button.

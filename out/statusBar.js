@@ -123,13 +123,13 @@ class StatusBarManager {
                 `---\n\n` +
                 `**API Total** _(from stats-cache.json)_\n\n` +
                 `💰 Cost: ${this.formatCostFull(apiTotal.cost)}\n\n` +
-                `🪙 Tokens: ${this.formatNumberFull(apiTotal.tokens)}\n\n` +
+                `🔢 Tokens: ${this.formatNumberFull(apiTotal.tokens)}\n\n` +
                 `💬 Messages: ${this.formatNumberFull(apiTotal.messages)}\n\n` +
                 `📊 Sessions: ${this.formatNumberFull(apiTotal.sessions)}\n\n` +
                 `---\n\n` +
                 `**Calculated Total** _(from SQLite + JSONL)_\n\n` +
                 `💰 Cost: ${this.formatCostFull(calcTotal.cost)}\n\n` +
-                `🪙 Tokens: ${this.formatNumberFull(calcTotal.tokens)}\n\n` +
+                `🔢 Tokens: ${this.formatNumberFull(calcTotal.tokens)}\n\n` +
                 `💬 Messages: ${this.formatNumberFull(calcTotal.messages)}\n\n` +
                 `📊 Sessions: ${this.formatNumberFull(calcTotal.sessions)}\n\n` +
                 `---\n\n` +
@@ -170,7 +170,7 @@ class StatusBarManager {
             this.todayCost.text = `$(calendar) ${this.formatCostScaled(data.today.cost)}`;
             this.todayCost.tooltip = new vscode.MarkdownString(`**Today's Usage (API Cost)**\n\n` +
                 `💵 Cost: ${this.formatCostFull(data.today.cost)}\n\n` +
-                `🪙 Tokens: ${this.formatNumberFull(data.today.tokens)}\n\n` +
+                `🔢 Tokens: ${this.formatNumberFull(data.today.tokens)}\n\n` +
                 `💬 Messages: ${this.formatNumberFull(data.today.messages)}${budgetInfo}\n\n` +
                 `---\n\n` +
                 `**Comparisons**\n\n` +
@@ -218,7 +218,7 @@ class StatusBarManager {
             }
             this.tokens.text = `$(symbol-number) ${this.formatNumberScaled(acct.tokens)}`;
             this.tokens.tooltip = new vscode.MarkdownString(`**Account Total Tokens**\n\n` +
-                `🪙 Total: ${this.formatNumberFull(acct.tokens)} tokens\n\n` +
+                `🔢 Total: ${this.formatNumberFull(acct.tokens)} tokens\n\n` +
                 `📥 Input: ${this.formatNumberScaled(acct.inputTokens)}\n\n` +
                 `📤 Output: ${this.formatNumberScaled(acct.outputTokens)}\n\n` +
                 `---\n\n` +

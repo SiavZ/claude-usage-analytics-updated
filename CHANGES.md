@@ -8,6 +8,7 @@ This is a modified fork of [claude-usage-analytics](https://github.com/AnalyticE
 
 - **Updated `formatModelName()`** in `dataProvider.js` to correctly display "Opus 4.6" and "Sonnet 4.6" for new model IDs (falls back to legacy names for older models)
 - **Added model entries** in both `modelPricing.json` files for `claude-opus-4-6` ($5/$25), `claude-sonnet-4-6` ($3/$15), and `claude-haiku-4-5-20251001` ($1/$5)
+- **Fixed dot-notation model matching** — Copilot API returns model names like `claude-opus-4.6` (dot) while Claude Code uses `claude-opus-4-6` (hyphen). `getPricingForModel()` and `formatModelName()` now match both formats.
 
 ### Pricing Fixes
 
@@ -61,3 +62,13 @@ This is a modified fork of [claude-usage-analytics](https://github.com/AnalyticE
 - **Added `copilot_additions` and `copilot_model_additions` DB tables** — tracks usage from Copilot CLI and other external tools separately, surviving `saveDatabase()` overwrites via a sidecar JSON pattern.
 - **Added `tools/backfill_copilot_sessions.py`** — reads `~/.copilot/session-state/*/events.jsonl`, aggregates by date, writes to DB tables and sidecar JSON. Idempotent via session directory fingerprints.
 - **SQL UNION merges** — `getAllDailySnapshots`, `getTotalStats`, and `getAllModelUsage` queries now merge copilot_additions data automatically.
+
+### Copilot Backfill Improvements (from PR #2)
+
+- **Dual cost modes** (`--cost-mode` flag):
+  - `api-equivalent` (default) — what the same token usage would cost via direct Anthropic API calls
+  - `actual` — Copilot Business pricing ($19/month + $0.04/request overage above 300/month), distributed proportionally across active days
+- **User message counting** — switched from shutdown-event-only to `user.message` event counting, covering all sessions (not just those with a clean shutdown)
+- **Token extrapolation** — for sessions without shutdown events (no full token data), input/cache tokens are estimated using observed 164:1 input/output and 155:1 cache-read/output ratios from complete sessions
+- **`--reset` flag** — clears and re-imports from scratch
+- **Model name normalization** — normalizes dot notation (`claude-opus-4.6`) to hyphen (`claude-opus-4-6`) in sidecar output for consistent pricing matching

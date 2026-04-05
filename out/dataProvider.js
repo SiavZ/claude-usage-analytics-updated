@@ -196,11 +196,12 @@ const MODEL_PRICING = {
 };
 function getPricingForModel(modelName) {
     const lower = modelName.toLowerCase();
-    if (lower.includes('opus') && lower.includes('4-6'))
+    // Match both 'claude-opus-4-6' (hyphen, from backfill) and 'claude-opus-4.6' (dot, from API)
+    if (lower.includes('opus') && (lower.includes('4-6') || lower.includes('4.6')))
         return MODEL_PRICING['opus-4-6'];
     if (lower.includes('opus'))
         return MODEL_PRICING['opus'];
-    if (lower.includes('sonnet') && lower.includes('4-6'))
+    if (lower.includes('sonnet') && (lower.includes('4-6') || lower.includes('4.6')))
         return MODEL_PRICING['sonnet-4-6'];
     if (lower.includes('sonnet'))
         return MODEL_PRICING['sonnet'];
@@ -907,11 +908,11 @@ function formatModelName(name) {
     if (!name)
         return 'Unknown';
     const lower = name.toLowerCase();
-    if (lower.includes('opus') && lower.includes('4-6'))
+    if (lower.includes('opus') && (lower.includes('4-6') || lower.includes('4.6')))
         return 'Opus 4.6';
     if (lower.includes('opus'))
         return 'Opus 4.5';
-    if (lower.includes('sonnet') && lower.includes('4-6'))
+    if (lower.includes('sonnet') && (lower.includes('4-6') || lower.includes('4.6')))
         return 'Sonnet 4.6';
     if (lower.includes('sonnet'))
         return 'Sonnet 4.5';

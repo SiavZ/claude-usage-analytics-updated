@@ -583,6 +583,12 @@ function getUsageData() {
                         if (snapshot.messages > 0) {
                             daysWithActivity.add(snapshot.date);
                         }
+                    } else {
+                        // Date is already in cache — but if cache shows 0 messages and SQLite (copilot_additions)
+                        // has messages, still mark it active for streak calculation
+                        if (snapshot.messages > 0 && !daysWithActivity.has(snapshot.date)) {
+                            daysWithActivity.add(snapshot.date);
+                        }
                     }
                 }
                 // Combine historical + cache data, sorted by date
@@ -646,26 +652,12 @@ function getUsageData() {
             defaultData.today.messages = liveStats.messages;
             defaultData.today.tokens = liveStats.tokens;
             defaultData.today.cost = liveStats.cost;
-            // Mark today as active for streak calculation
-            if (liveStats.messages > 0) {
-                daysWithActivity.add(todayStr);
-            }
             // Also update today in dailyHistory if present
             const todayInHistory = defaultData.dailyHistory.find(d => d.date === todayStr);
             if (todayInHistory) {
                 todayInHistory.messages = liveStats.messages;
                 todayInHistory.tokens = liveStats.tokens;
                 todayInHistory.cost = liveStats.cost;
-            }
-            else {
-                // Today not in history yet - add it
-                defaultData.dailyHistory.push({
-                    date: todayStr,
-                    messages: liveStats.messages,
-                    tokens: liveStats.tokens,
-                    cost: liveStats.cost
-                });
-                defaultData.dailyHistory.sort((a, b) => a.date.localeCompare(b.date));
             }
         }
         // === LAST 14 DAYS CALCULATION ===
@@ -687,21 +679,6 @@ function getUsageData() {
             defaultData.last14Days.avgDayCost = sum14Cost / 14;
             defaultData.last14Days.avgDayMessages = Math.round(sum14Messages / 14);
             defaultData.last14Days.avgDayTokens = Math.round(sum14Tokens / 14);
-        }
-        // === MERGE FORGE ACTIVE DATES (if available) ===
-        try {
-            const forgeDatesPath = path.join(os.homedir(), '.claude', 'forge-active-dates.json');
-            if (fs.existsSync(forgeDatesPath)) {
-                const forgeData = JSON.parse(fs.readFileSync(forgeDatesPath, 'utf8'));
-                if (forgeData.activeDates && Array.isArray(forgeData.activeDates)) {
-                    for (const date of forgeData.activeDates) {
-                        daysWithActivity.add(date);
-                    }
-                }
-            }
-        }
-        catch (e) {
-            // Ignore errors reading Forge dates
         }
         // === STREAK CALCULATION ===
         // Count consecutive days with activity, allowing today to be missing (cache may not be updated yet)

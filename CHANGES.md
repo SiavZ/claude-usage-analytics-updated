@@ -7,12 +7,24 @@ This is a modified fork of [claude-usage-analytics](https://github.com/AnalyticE
 ### Model Support (Opus 4.6 / Sonnet 4.6 / Haiku 4.5)
 
 - **Updated `formatModelName()`** in `dataProvider.js` to correctly display "Opus 4.6" and "Sonnet 4.6" for new model IDs (falls back to legacy names for older models)
-- **Added model entries** in both `modelPricing.json` files for `claude-opus-4-6` ($5/$25), `claude-sonnet-4-6` ($3/$15), and `claude-haiku-4-5-20251001` ($0.80/$4)
+- **Added model entries** in both `modelPricing.json` files for `claude-opus-4-6` ($5/$25), `claude-sonnet-4-6` ($3/$15), and `claude-haiku-4-5-20251001` ($1/$5)
 
 ### Pricing Fixes
 
-- **Fixed `MODEL_PRICING` in `dataProvider.js` and `database.js`** — added Opus 4.6 ($5/$25), Sonnet 4.6, and Haiku pricing tiers with correct cache read/write rates
-- **Fixed `cacheSavings` calculation** — now computes per-model savings using actual pricing instead of hardcoded Sonnet rates
+- **Fixed 1-hour cache write rate** — Claude Code uses 1-hour caching by default, which costs 2.0x the base input price (not 1.25x which is the 5-minute rate). The original code used 1.25x everywhere, underestimating cache write costs by ~37%.
+- **Added 5m vs 1h cache write distinction** — `backfill-jsonl.js` and `scan-today.js` now read `cache_creation.ephemeral_5m_input_tokens` and `ephemeral_1h_input_tokens` from the JSONL usage objects for precise billing.
+- **Fixed Haiku 4.5 pricing** — was $0.80/$4.00 per MTok, corrected to $1.00/$5.00 per official Anthropic pricing.
+- **Added web search cost tracking** — each web search costs $0.01; now extracted from `server_tool_use.web_search_requests` in usage objects.
+- **Fixed `MODEL_PRICING` in `dataProvider.js` and `database.js`** — added Opus 4.6 ($5/$25), Sonnet 4.6, and Haiku pricing tiers with correct cache read/write rates.
+- **Fixed `cacheSavings` calculation** — now computes per-model savings using actual pricing instead of hardcoded Sonnet rates.
+
+#### Correct Pricing Table (per 1M tokens)
+
+| Model | Input | Output | Cache Read (0.1x) | Cache Write 5m (1.25x) | Cache Write 1h (2.0x) |
+|---|---|---|---|---|---|
+| Opus 4.6 | $5 | $25 | $0.50 | $6.25 | $10.00 |
+| Sonnet 4.6 | $3 | $15 | $0.30 | $3.75 | $6.00 |
+| Haiku 4.5 | $1 | $5 | $0.10 | $1.25 | $2.00 |
 
 ### Data Population Fixes
 
@@ -41,3 +53,11 @@ This is a modified fork of [claude-usage-analytics](https://github.com/AnalyticE
 
 - **Fixed scan-today.js node path** — `extension.js` used bare `'node'` which isn't available in VS Code's remote extension host PATH. Now resolves the `node` binary from the same directory as `process.execPath`.
 - **Fixed broken emoji** — replaced `🪙` (Unicode 13.0 coin emoji, often broken on Linux servers) with `🔢` (widely supported) in status bar tooltips and dashboard toggle button.
+- **Increased scan timeout** — from 30s to 120s. Large repos with 3000+ JSONL files can take 20+ seconds to scan, causing timeouts under VS Code load.
+- **Fixed model breakdown display** — the model pie chart was built only from `stats-cache.json` (which can be stale), missing models like Sonnet entirely. Now builds from SQLite when it has more complete data. Display limit bumped from 5 to 10 models.
+
+### Copilot/Forge CLI Integration (from PR #1)
+
+- **Added `copilot_additions` and `copilot_model_additions` DB tables** — tracks usage from Copilot CLI and other external tools separately, surviving `saveDatabase()` overwrites via a sidecar JSON pattern.
+- **Added `tools/backfill_copilot_sessions.py`** — reads `~/.copilot/session-state/*/events.jsonl`, aggregates by date, writes to DB tables and sidecar JSON. Idempotent via session directory fingerprints.
+- **SQL UNION merges** — `getAllDailySnapshots`, `getTotalStats`, and `getAllModelUsage` queries now merge copilot_additions data automatically.

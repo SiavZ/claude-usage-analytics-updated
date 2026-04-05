@@ -267,7 +267,7 @@ async function activate(context) {
                 const execDir = require('path').dirname(process.execPath);
                 const siblingNode = require('path').join(execDir, 'node');
                 const nodePath = require('fs').existsSync(siblingNode) ? siblingNode : 'node';
-                execFile(nodePath, [scriptPath], { timeout: 30000 }, (error, stdout, stderr) => {
+                execFile(nodePath, [scriptPath], { timeout: 120000, maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
                     if (error) {
                         vscode.window.showErrorMessage(`Scan failed: ${error.message}`);
                         resolve();

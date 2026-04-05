@@ -583,6 +583,12 @@ function getUsageData() {
                         if (snapshot.messages > 0) {
                             daysWithActivity.add(snapshot.date);
                         }
+                    } else {
+                        // Date is already in cache — but if cache shows 0 messages and SQLite (copilot_additions)
+                        // has messages, still mark it active for streak calculation
+                        if (snapshot.messages > 0 && !daysWithActivity.has(snapshot.date)) {
+                            daysWithActivity.add(snapshot.date);
+                        }
                     }
                 }
                 // Combine historical + cache data, sorted by date

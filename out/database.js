@@ -64,6 +64,7 @@ const initSqlJs = require('sql.js/dist/sql-asm.js');
 let db = null;
 let dbInitPromise = null;
 let dbInitFailed = false;
+let sqlJsConstructor = null;
 // Database file path
 function getDbPath() {
     return path.join(os.homedir(), '.claude', 'analytics.db');
@@ -115,6 +116,7 @@ async function initDatabase() {
         try {
             // Initialize sql.js (ASM version - pure JS, no WASM)
             const SQL = await initSqlJs();
+            sqlJsConstructor = SQL.Database;
             const dbPath = getDbPath();
             const dbDir = path.dirname(dbPath);
             // Ensure .claude directory exists
@@ -133,6 +135,33 @@ async function initDatabase() {
             createSchema(db);
             // Check and run migrations
             runMigrations(db);
+            // Load copilot_additions from the backfill JSON sidecar if present,
+            // since importFromCache -> saveDatabase may overwrite these rows.
+            const copilotJsonPath = path.join(path.dirname(dbPath), 'copilot-additions.json');
+            if (fs.existsSync(copilotJsonPath)) {
+                try {
+                    const copilotData = JSON.parse(fs.readFileSync(copilotJsonPath, 'utf8'));
+                    if (Array.isArray(copilotData.rows)) {
+                        for (const row of copilotData.rows) {
+                            db.run(
+                                'INSERT OR REPLACE INTO copilot_additions (date, cost, messages, tokens, sessions) VALUES (?, ?, ?, ?, ?)',
+                                [row.date, row.cost, row.messages, row.tokens, row.sessions]
+                            );
+                        }
+                    }
+                    if (Array.isArray(copilotData.modelRows)) {
+                        for (const row of copilotData.modelRows) {
+                            db.run(
+                                'INSERT OR REPLACE INTO copilot_model_additions (date, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens) VALUES (?, ?, ?, ?, ?, ?)',
+                                [row.date, row.model, row.input_tokens, row.output_tokens, row.cache_read_tokens, row.cache_write_tokens]
+                            );
+                        }
+                    }
+                    console.log('Claude Analytics: Loaded copilot additions from sidecar JSON');
+                } catch (e) {
+                    console.error('Claude Analytics: Failed to load copilot-additions.json:', e);
+                }
+            }
             console.log('Claude Analytics: Database initialized successfully');
             return db;
         }
@@ -178,6 +207,27 @@ function createSchema(database) {
         CREATE TABLE IF NOT EXISTS metadata (
             key TEXT PRIMARY KEY,
             value TEXT
+        )
+    `);
+    // External additions (e.g. Copilot) - never overwritten by INSERT OR REPLACE on daily_snapshots
+    database.run(`
+        CREATE TABLE IF NOT EXISTS copilot_additions (
+            date TEXT PRIMARY KEY,
+            cost REAL DEFAULT 0,
+            messages INTEGER DEFAULT 0,
+            tokens INTEGER DEFAULT 0,
+            sessions INTEGER DEFAULT 0
+        )
+    `);
+    database.run(`
+        CREATE TABLE IF NOT EXISTS copilot_model_additions (
+            date TEXT NOT NULL,
+            model TEXT NOT NULL,
+            input_tokens INTEGER DEFAULT 0,
+            output_tokens INTEGER DEFAULT 0,
+            cache_read_tokens INTEGER DEFAULT 0,
+            cache_write_tokens INTEGER DEFAULT 0,
+            PRIMARY KEY (date, model)
         )
     `);
     // Create indexes for faster queries
@@ -247,7 +297,9 @@ function setDbMetadata(key, value) {
     setMetadata(db, key, value);
 }
 /**
- * Save database to disk
+ * Save database to disk.
+ * Copilot additions are loaded from sidecar JSON at initDatabase() and persist
+ * in-memory, so no disk merge is needed on each save.
  */
 function saveDatabase() {
     if (!db)
@@ -296,14 +348,23 @@ function saveModelUsage(usage) {
     `, [usage.date, usage.model, usage.inputTokens, usage.outputTokens, usage.cacheReadTokens, usage.cacheWriteTokens]);
 }
 /**
- * Get all daily snapshots from database
+ * Get all daily snapshots from database, merged with any copilot_additions
  */
 function getAllDailySnapshots() {
     if (!db)
         return [];
     const result = db.exec(`
-        SELECT date, cost, messages, tokens, sessions
-        FROM daily_snapshots
+        SELECT d.date,
+               d.cost + COALESCE(c.cost, 0) as cost,
+               d.messages + COALESCE(c.messages, 0) as messages,
+               d.tokens + COALESCE(c.tokens, 0) as tokens,
+               d.sessions + COALESCE(c.sessions, 0) as sessions
+        FROM daily_snapshots d
+        LEFT JOIN copilot_additions c ON d.date = c.date
+        UNION
+        SELECT c.date, c.cost, c.messages, c.tokens, c.sessions
+        FROM copilot_additions c
+        WHERE c.date NOT IN (SELECT date FROM daily_snapshots)
         ORDER BY date ASC
     `);
     if (result.length === 0 || result[0].values.length === 0) {
@@ -341,14 +402,25 @@ function getModelUsageForDate(date) {
     }));
 }
 /**
- * Get all model usage records
+ * Get all model usage records, merged with copilot_model_additions
  */
 function getAllModelUsage() {
     if (!db)
         return [];
     const result = db.exec(`
-        SELECT date, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens
-        FROM model_usage
+        SELECT date, model,
+               SUM(input_tokens) as input_tokens,
+               SUM(output_tokens) as output_tokens,
+               SUM(cache_read_tokens) as cache_read_tokens,
+               SUM(cache_write_tokens) as cache_write_tokens
+        FROM (
+            SELECT date, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens
+            FROM model_usage
+            UNION ALL
+            SELECT date, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens
+            FROM copilot_model_additions
+        )
+        GROUP BY date, model
         ORDER BY date ASC
     `);
     if (result.length === 0 || result[0].values.length === 0) {
@@ -412,7 +484,19 @@ function getTotalStats() {
             COALESCE(SUM(tokens), 0) as total_tokens,
             COALESCE(SUM(sessions), 0) as total_sessions,
             COUNT(*) as days_count
-        FROM daily_snapshots
+        FROM (
+            SELECT d.date,
+                   d.cost + COALESCE(c.cost, 0) as cost,
+                   d.messages + COALESCE(c.messages, 0) as messages,
+                   d.tokens + COALESCE(c.tokens, 0) as tokens,
+                   d.sessions + COALESCE(c.sessions, 0) as sessions
+            FROM daily_snapshots d
+            LEFT JOIN copilot_additions c ON d.date = c.date
+            UNION
+            SELECT c.date, c.cost, c.messages, c.tokens, c.sessions
+            FROM copilot_additions c
+            WHERE c.date NOT IN (SELECT date FROM daily_snapshots)
+        )
     `);
     if (result.length > 0 && result[0].values.length > 0) {
         const row = result[0].values[0];

@@ -22,7 +22,7 @@ import sys
 # ---------------------------------------------------------------------------
 MODEL_PRICING = {
     # Opus variants
-    "claude-opus-4.6": {"input": 15.00, "output": 75.00, "cache_read": 1.50, "cache_write": 18.75},
+    "claude-opus-4.6": {"input": 5.00, "output": 25.00, "cache_read": 0.50, "cache_write": 6.25},
     "claude-opus-4.5": {"input": 15.00, "output": 75.00, "cache_read": 1.50, "cache_write": 18.75},
     "claude-opus-4": {"input": 15.00, "output": 75.00, "cache_read": 1.50, "cache_write": 18.75},
     "claude-opus": {"input": 15.00, "output": 75.00, "cache_read": 1.50, "cache_write": 18.75},
@@ -95,8 +95,11 @@ def load_sessions(session_dir: str) -> list[dict]:
 
                     date_str = datetime.datetime.utcfromtimestamp(ts / 1000).strftime("%Y-%m-%d")
 
+                    # Use the parent directory name as a stable session ID
+                    session_id = os.path.basename(os.path.dirname(f))
                     sessions.append(
                         {
+                            "session_id": session_id,
                             "date": date_str,
                             "premium_requests": data.get("totalPremiumRequests", 0),
                             "model_metrics": metrics,
@@ -216,14 +219,14 @@ def import_to_db(db_path: str, by_date: dict, sessions: list[dict], dry_run: boo
     """)
 
     # Check which sessions were already imported to prevent double-counting on re-runs.
-    # Session IDs are stored as "date|premium_requests|total_requests" fingerprints.
+    # Session IDs are the directory names from ~/.copilot/session-state/<id>/
     imported = get_imported_session_ids(conn)
     new_session_ids = set()
 
     # Filter sessions to only those not yet imported
     pending_sessions = []
     for s in sessions:
-        sid = f"{s['date']}|{s['premium_requests']}|{sum(m.get('requests', {}).get('count', 0) for m in s['model_metrics'].values())}"
+        sid = s['session_id']
         if sid in imported:
             stats["skipped"] += 1
         else:

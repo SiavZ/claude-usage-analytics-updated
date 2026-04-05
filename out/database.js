@@ -64,7 +64,7 @@ const initSqlJs = require('sql.js/dist/sql-asm.js');
 let db = null;
 let dbInitPromise = null;
 let dbInitFailed = false;
-let sqlJsConstructor = null; // stored after first init for use in saveDatabase
+let sqlJsConstructor = null;
 // Database file path
 function getDbPath() {
     return path.join(os.homedir(), '.claude', 'analytics.db');
@@ -297,47 +297,17 @@ function setDbMetadata(key, value) {
     setMetadata(db, key, value);
 }
 /**
- * Save database to disk, merging any copilot_additions rows that exist on disk
- * but not in the current in-memory DB (written externally by backfill script).
+ * Save database to disk.
+ * Copilot additions are loaded from sidecar JSON at initDatabase() and persist
+ * in-memory, so no disk merge is needed on each save.
  */
 function saveDatabase() {
     if (!db)
         return;
     try {
-        // Before exporting, merge any copilot_additions rows that were written to disk
-        // by the backfill script but aren't yet in the in-memory DB.
-        const dbPath = getDbPath();
-        if (sqlJsConstructor && fs.existsSync(dbPath)) {
-            try {
-                const diskBuffer = fs.readFileSync(dbPath);
-                const diskDb = new sqlJsConstructor(diskBuffer);
-                const diskRows = diskDb.exec('SELECT date, cost, messages, tokens, sessions FROM copilot_additions');
-                if (diskRows.length > 0 && diskRows[0].values.length > 0) {
-                    for (const row of diskRows[0].values) {
-                        db.run(
-                            'INSERT OR IGNORE INTO copilot_additions (date, cost, messages, tokens, sessions) VALUES (?, ?, ?, ?, ?)',
-                            row
-                        );
-                    }
-                }
-                const diskModelRows = diskDb.exec('SELECT date, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens FROM copilot_model_additions');
-                if (diskModelRows.length > 0 && diskModelRows[0].values.length > 0) {
-                    for (const row of diskModelRows[0].values) {
-                        db.run(
-                            'INSERT OR IGNORE INTO copilot_model_additions (date, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens) VALUES (?, ?, ?, ?, ?, ?)',
-                            row
-                        );
-                    }
-                }
-                diskDb.close();
-            } catch (mergeErr) {
-                // Non-fatal: proceed with normal save
-                console.error('Claude Analytics: Failed to merge copilot rows before save:', mergeErr);
-            }
-        }
         const data = db.export();
         const buffer = Buffer.from(data);
-        fs.writeFileSync(dbPath, buffer);
+        fs.writeFileSync(getDbPath(), buffer);
     }
     catch (error) {
         console.error('Failed to save database:', error);

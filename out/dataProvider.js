@@ -443,8 +443,10 @@ function getUsageData() {
                     for (const [modelName, tokens] of Object.entries(day.tokensByModel)) {
                         const tokenCount = tokens;
                         totalTokens += tokenCount;
-                        // Track per-model totals for pie chart
-                        modelTokenTotals[modelName] = (modelTokenTotals[modelName] || 0) + tokenCount;
+                        // Track per-model totals for pie chart — normalize to display name to avoid
+                        // duplicate entries for the same model (e.g. 'claude-opus-4.6' vs 'Claude Opus 4.6')
+                        const normalizedName = formatModelName(modelName);
+                        modelTokenTotals[normalizedName] = (modelTokenTotals[normalizedName] || 0) + tokenCount;
                         // Calculate cost based on model pricing
                         // Using approximate split: 30% input, 10% output, 50% cache read, 10% cache write
                         const pricing = getPricingForModel(modelName);
@@ -453,15 +455,15 @@ function getUsageData() {
                     }
                 }
             }
-            // Build model breakdown for pie chart
+            // Build model breakdown for pie chart — modelTokenTotals is already keyed by display name
             let grandTotal = 0;
-            for (const [modelName, tokens] of Object.entries(modelTokenTotals)) {
+            for (const [displayName, tokens] of Object.entries(modelTokenTotals)) {
                 grandTotal += tokens;
                 models.push({
-                    name: formatModelName(modelName),
+                    name: displayName,
                     tokens: tokens,
                     percentage: 0,
-                    color: getModelColor(modelName)
+                    color: getModelColor(displayName)
                 });
             }
             // Calculate percentages
@@ -481,7 +483,7 @@ function getUsageData() {
             } else {
                 defaultData.allTime.cacheTokens = 0;
             }
-            defaultData.models = models.sort((a, b) => b.tokens - a.tokens).slice(0, 5);
+            defaultData.models = models.sort((a, b) => b.tokens - a.tokens).slice(0, 10);
             // Note: Cache efficiency is already calculated from modelUsage above, don't overwrite
         }
         // === OVERRIDE MODEL BREAKDOWN FROM SQLITE (more complete than stats-cache) ===
@@ -489,29 +491,30 @@ function getUsageData() {
             try {
                 const allModelUsage = (0, database_1.getAllModelUsage)();
                 if (allModelUsage.length > 0) {
+                    // Group by normalized display name to deduplicate variants like
+                    // 'claude-opus-4.6', 'Claude Opus 4.6', 'claude-opus-4-6' → 'Opus 4.6'
                     const sqliteModelTotals = {};
                     for (const record of allModelUsage) {
+                        const displayName = formatModelName(record.model);
                         const total = record.inputTokens + record.outputTokens + record.cacheReadTokens + record.cacheWriteTokens;
-                        sqliteModelTotals[record.model] = (sqliteModelTotals[record.model] || 0) + total;
+                        sqliteModelTotals[displayName] = (sqliteModelTotals[displayName] || 0) + total;
                     }
                     let sqliteGrandTotal = 0;
                     const sqliteModels = [];
-                    for (const [modelName, tokens] of Object.entries(sqliteModelTotals)) {
+                    for (const [displayName, tokens] of Object.entries(sqliteModelTotals)) {
                         sqliteGrandTotal += tokens;
                         sqliteModels.push({
-                            name: formatModelName(modelName),
+                            name: displayName,
                             tokens: tokens,
                             percentage: 0,
-                            color: getModelColor(modelName)
+                            color: getModelColor(displayName)
                         });
                     }
                     for (const model of sqliteModels) {
                         model.percentage = sqliteGrandTotal > 0 ? (model.tokens / sqliteGrandTotal) * 100 : 0;
                     }
-                    // Use SQLite models if they have more entries (more complete data)
-                    if (sqliteModels.length > defaultData.models.length) {
-                        defaultData.models = sqliteModels.sort((a, b) => b.tokens - a.tokens).slice(0, 10);
-                    }
+                    // SQLite always wins — it has deduped, complete data from the JSONL backfill
+                    defaultData.models = sqliteModels.sort((a, b) => b.tokens - a.tokens).slice(0, 10);
                 }
             }
             catch (e) {

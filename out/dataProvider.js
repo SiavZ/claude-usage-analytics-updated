@@ -49,26 +49,7 @@ const database_1 = require("./database");
 // Track if database has been initialized
 let dbInitialized = false;
 // Live stats from JSONL scanning (updated by scan command)
-// Initialize from persisted file if available
 let liveStats = null;
-try {
-    const livePath = path.join(os.homedir(), '.claude', 'live-today-stats.json');
-    if (fs.existsSync(livePath)) {
-        const persisted = JSON.parse(fs.readFileSync(livePath, 'utf8'));
-        const todayCheck = new Date();
-        const todayString = `${todayCheck.getFullYear()}-${String(todayCheck.getMonth() + 1).padStart(2, '0')}-${String(todayCheck.getDate()).padStart(2, '0')}`;
-        if (persisted.date === todayString) {
-            liveStats = {
-                date: persisted.date,
-                cost: persisted.cost,
-                messages: persisted.messages,
-                tokens: persisted.totalTokens || persisted.tokens || 0
-            };
-        }
-    }
-} catch (e) {
-    // Ignore errors reading persisted live stats
-}
 /**
  * Set live stats from JSONL scan (called by scan command)
  * Also persists to SQLite for accurate historical tracking
@@ -102,11 +83,75 @@ function setLiveStats(stats) {
                 tokens: stats.totalTokens || stats.tokens || 0,
                 sessions: 0 // Not tracked in live scan
             });
+            // v3: Persist enriched data from scan-today.js
+            if (stats.enriched) {
+                persistEnrichedScanData(stats.date, stats.enriched);
+            }
             // Persist to disk
             (0, database_1.saveDatabase)();
         }
         catch (e) {
             console.error('Failed to persist live stats to SQLite:', e);
+        }
+    }
+}
+/**
+ * Persist enriched scan data into v3 tables
+ */
+function persistEnrichedScanData(date, enriched) {
+    // Tool usage
+    if (enriched.toolUsage) {
+        for (const [projectPath, tools] of Object.entries(enriched.toolUsage)) {
+            if (projectPath === 'unknown')
+                continue;
+            const projectId = (0, database_1.getOrCreateProject)(projectPath, date);
+            for (const [toolName, data] of Object.entries(tools)) {
+                (0, database_1.saveToolUsageDaily)({ date, projectId, toolName, invocations: data.invocations, totalDurationMs: data.durationMs });
+            }
+        }
+    }
+    // File types
+    if (enriched.fileTypes) {
+        for (const [projectPath, extensions] of Object.entries(enriched.fileTypes)) {
+            if (projectPath === 'unknown')
+                continue;
+            const projectId = (0, database_1.getOrCreateProject)(projectPath, date);
+            for (const [ext, ops] of Object.entries(extensions)) {
+                (0, database_1.saveFileTypeDaily)({ date, projectId, fileExtension: ext, filesRead: ops.read, filesEdited: ops.edited, filesCreated: ops.created });
+            }
+        }
+    }
+    // Hourly distribution
+    if (enriched.hourly) {
+        for (const [hourStr, data] of Object.entries(enriched.hourly)) {
+            (0, database_1.saveHourlyDistribution)({ date, hour: parseInt(hourStr, 10), messages: data.messages, cost: Math.round(data.cost * 100) / 100, tokens: data.tokens });
+        }
+    }
+    // Project daily stats
+    if (enriched.projectStats) {
+        for (const [projectPath, pStats] of Object.entries(enriched.projectStats)) {
+            if (projectPath === 'unknown')
+                continue;
+            const projectId = (0, database_1.getOrCreateProject)(projectPath, date);
+            (0, database_1.saveProjectDailyStats)({ date, projectId, cost: 0, messages: pStats.messages, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, sessions: pStats.sessions });
+        }
+    }
+    // Cache efficiency
+    if (enriched.cacheEfficiency) {
+        for (const [projectPath, models] of Object.entries(enriched.cacheEfficiency)) {
+            if (projectPath === 'unknown')
+                continue;
+            const projectId = (0, database_1.getOrCreateProject)(projectPath, date);
+            for (const [model, data] of Object.entries(models)) {
+                const totalDenom = data.totalInput + data.cacheRead;
+                const hitRatio = totalDenom > 0 ? data.cacheRead / totalDenom : 0;
+                (0, database_1.saveCacheEfficiencyDaily)({
+                    date, projectId, model,
+                    totalInputTokens: data.totalInput, cacheReadTokens: data.cacheRead, cacheWriteTokens: data.cacheWrite,
+                    ephemeral5mTokens: data.eph5m, ephemeral1hTokens: data.eph1h,
+                    cacheHitRatio: Math.round(hitRatio * 10000) / 10000, estimatedSavings: 0
+                });
+            }
         }
     }
 }
@@ -132,43 +177,7 @@ async function initializeDataWithDatabase() {
         const statsCachePath = getStatsCachePath();
         if (fs.existsSync(statsCachePath)) {
             const statsCache = JSON.parse(fs.readFileSync(statsCachePath, 'utf8'));
-            await (0, database_1.importFromCache)(statsCache);
-        }
-        // Auto-import backfill results if available
-        const backfillResultsPath = path.join(os.homedir(), '.claude', 'backfill-results.json');
-        if (fs.existsSync(backfillResultsPath)) {
-            try {
-                const result = JSON.parse(fs.readFileSync(backfillResultsPath, 'utf8'));
-                if (result.dailyStats && result.dailyStats.length > 0) {
-                    let daysImported = 0;
-                    for (const day of result.dailyStats) {
-                        (0, database_1.saveDailySnapshot)({
-                            date: day.date,
-                            cost: day.cost,
-                            messages: day.messages,
-                            tokens: day.totalTokens,
-                            sessions: day.sessions || 0
-                        });
-                        daysImported++;
-                        for (const model of (day.models || [])) {
-                            (0, database_1.saveModelUsage)({
-                                date: day.date,
-                                model: model.model,
-                                inputTokens: model.inputTokens,
-                                outputTokens: model.outputTokens,
-                                cacheReadTokens: model.cacheReadTokens,
-                                cacheWriteTokens: model.cacheWriteTokens
-                            });
-                        }
-                    }
-                    (0, database_1.saveDatabase)();
-                    console.log(`Auto-imported ${daysImported} days from backfill-results.json`);
-                    // Rename file so we don't re-import on every startup
-                    fs.renameSync(backfillResultsPath, backfillResultsPath + '.imported');
-                }
-            } catch (e) {
-                console.error('Failed to auto-import backfill results:', e);
-            }
+            return await (0, database_1.importFromCache)(statsCache);
         }
         return { imported: 0, skipped: 0 };
     }
@@ -185,28 +194,33 @@ function getConversationStatsPath() {
 }
 // Model pricing per 1M tokens
 // Cache rates: cache_read = input * 0.1 (90% discount), cache_write = input * 1.25 (25% premium)
-// Pricing per 1M tokens. cacheWrite = 1h rate (2x input, Claude Code default)
 const MODEL_PRICING = {
-    'opus-4-6': { input: 5, output: 25, cacheRead: 0.50, cacheWrite: 10.00 },
-    'opus': { input: 15, output: 75, cacheRead: 1.50, cacheWrite: 30.00 },
-    'sonnet-4-6': { input: 3, output: 15, cacheRead: 0.30, cacheWrite: 6.00 },
-    'sonnet': { input: 3, output: 15, cacheRead: 0.30, cacheWrite: 6.00 },
-    'haiku': { input: 1, output: 5, cacheRead: 0.10, cacheWrite: 2.00 },
-    default: { input: 3, output: 15, cacheRead: 0.30, cacheWrite: 6.00 }
+    opus_new: { input: 5, output: 25, cacheRead: 0.50, cacheWrite: 6.25 },
+    opus_legacy: { input: 15, output: 75, cacheRead: 1.50, cacheWrite: 18.75 },
+    sonnet: { input: 3, output: 15, cacheRead: 0.30, cacheWrite: 3.75 },
+    haiku_45: { input: 1, output: 5, cacheRead: 0.10, cacheWrite: 1.25 },
+    haiku_35: { input: 0.80, output: 4, cacheRead: 0.08, cacheWrite: 1.00 },
+    haiku_3: { input: 0.25, output: 1.25, cacheRead: 0.025, cacheWrite: 0.3125 },
+    default: { input: 3, output: 15, cacheRead: 0.30, cacheWrite: 3.75 }
 };
 function getPricingForModel(modelName) {
     const lower = modelName.toLowerCase();
-    // Match both 'claude-opus-4-6' (hyphen, from backfill) and 'claude-opus-4.6' (dot, from API)
-    if (lower.includes('opus') && (lower.includes('4-6') || lower.includes('4.6')))
-        return MODEL_PRICING['opus-4-6'];
-    if (lower.includes('opus'))
-        return MODEL_PRICING['opus'];
-    if (lower.includes('sonnet') && (lower.includes('4-6') || lower.includes('4.6')))
-        return MODEL_PRICING['sonnet-4-6'];
+    if (lower.includes('opus')) {
+        if (lower.includes('4-5') || lower.includes('4-6') || lower.includes('4-7'))
+            return MODEL_PRICING.opus_new;
+        return MODEL_PRICING.opus_legacy;
+    }
+    if (lower.includes('haiku')) {
+        if (lower.includes('4-5') || lower.includes('4.5'))
+            return MODEL_PRICING.haiku_45;
+        if (lower.includes('3-5') || lower.includes('3.5'))
+            return MODEL_PRICING.haiku_35;
+        if (lower.includes('3-haiku'))
+            return MODEL_PRICING.haiku_3;
+        return MODEL_PRICING.haiku_45;
+    }
     if (lower.includes('sonnet'))
-        return MODEL_PRICING['sonnet'];
-    if (lower.includes('haiku'))
-        return MODEL_PRICING['haiku'];
+        return MODEL_PRICING.sonnet;
     return MODEL_PRICING.default;
 }
 /**
@@ -346,7 +360,7 @@ function getUsageData() {
         // === ACCOUNT TOTAL API (lifetime aggregates from Claude's stats-cache) ===
         if (statsCache.modelUsage) {
             let totalInput = 0, totalOutput = 0, totalCacheRead = 0, totalCacheWrite = 0;
-            let accountCost = 0;
+            let accountCost = 0, totalCacheSavings = 0;
             for (const [modelName, usage] of Object.entries(statsCache.modelUsage)) {
                 const m = usage;
                 const pricing = getPricingForModel(modelName);
@@ -363,6 +377,8 @@ function getUsageData() {
                 accountCost += (output / 1000000) * pricing.output;
                 accountCost += (cacheRead / 1000000) * pricing.cacheRead;
                 accountCost += (cacheWrite / 1000000) * pricing.cacheWrite;
+                // Savings = what cache reads would have cost at full input rate minus what was actually charged
+                totalCacheSavings += (cacheRead / 1000000) * (pricing.input - pricing.cacheRead);
             }
             // Populate API source
             defaultData.accountTotalApi.inputTokens = totalInput;
@@ -381,14 +397,7 @@ function getUsageData() {
             // Cache efficiency from account totals
             if (totalInput + totalCacheRead > 0) {
                 defaultData.funStats.cacheHitRatio = Math.round((totalCacheRead / (totalInput + totalCacheRead)) * 100);
-                // Calculate actual savings per model instead of assuming Sonnet rates
-                let cacheSavings = 0;
-                for (const [modelName, usage] of Object.entries(statsCache.modelUsage)) {
-                    const pricing = getPricingForModel(modelName);
-                    const modelCacheRead = usage.cacheReadInputTokens || 0;
-                    cacheSavings += (modelCacheRead / 1000000) * (pricing.input - pricing.cacheRead);
-                }
-                defaultData.funStats.cacheSavings = cacheSavings;
+                defaultData.funStats.cacheSavings = totalCacheSavings;
             }
         }
         // === ACCOUNT TOTAL CALCULATED (from SQLite model_usage - accurate with all token types) ===
@@ -471,52 +480,9 @@ function getUsageData() {
             defaultData.allTime.cost = totalCost;
             defaultData.allTime.tokens = totalTokens;
             defaultData.allTime.totalTokens = totalTokens;
-            // Use cache token data from modelUsage if available
-            if (statsCache.modelUsage) {
-                let totalCache = 0;
-                for (const usage of Object.values(statsCache.modelUsage)) {
-                    totalCache += (usage.cacheReadInputTokens || 0) + (usage.cacheCreationInputTokens || 0);
-                }
-                defaultData.allTime.cacheTokens = totalCache;
-            } else {
-                defaultData.allTime.cacheTokens = 0;
-            }
+            defaultData.allTime.cacheTokens = 0; // Can't determine from daily breakdown
             defaultData.models = models.sort((a, b) => b.tokens - a.tokens).slice(0, 5);
             // Note: Cache efficiency is already calculated from modelUsage above, don't overwrite
-        }
-        // === OVERRIDE MODEL BREAKDOWN FROM SQLITE (more complete than stats-cache) ===
-        if (dbInitialized) {
-            try {
-                const allModelUsage = (0, database_1.getAllModelUsage)();
-                if (allModelUsage.length > 0) {
-                    const sqliteModelTotals = {};
-                    for (const record of allModelUsage) {
-                        const total = record.inputTokens + record.outputTokens + record.cacheReadTokens + record.cacheWriteTokens;
-                        sqliteModelTotals[record.model] = (sqliteModelTotals[record.model] || 0) + total;
-                    }
-                    let sqliteGrandTotal = 0;
-                    const sqliteModels = [];
-                    for (const [modelName, tokens] of Object.entries(sqliteModelTotals)) {
-                        sqliteGrandTotal += tokens;
-                        sqliteModels.push({
-                            name: formatModelName(modelName),
-                            tokens: tokens,
-                            percentage: 0,
-                            color: getModelColor(modelName)
-                        });
-                    }
-                    for (const model of sqliteModels) {
-                        model.percentage = sqliteGrandTotal > 0 ? (model.tokens / sqliteGrandTotal) * 100 : 0;
-                    }
-                    // Use SQLite models if they have more entries (more complete data)
-                    if (sqliteModels.length > defaultData.models.length) {
-                        defaultData.models = sqliteModels.sort((a, b) => b.tokens - a.tokens).slice(0, 10);
-                    }
-                }
-            }
-            catch (e) {
-                // Fall back to stats-cache models
-            }
         }
         // === DAILY HISTORY (from dailyActivity + dailyModelTokens) ===
         const todayStr = getLocalDateString();
@@ -619,12 +585,6 @@ function getUsageData() {
                         if (snapshot.messages > 0) {
                             daysWithActivity.add(snapshot.date);
                         }
-                    } else {
-                        // Date is already in cache — but if cache shows 0 messages and SQLite (copilot_additions)
-                        // has messages, still mark it active for streak calculation
-                        if (snapshot.messages > 0 && !daysWithActivity.has(snapshot.date)) {
-                            daysWithActivity.add(snapshot.date);
-                        }
                     }
                 }
                 // Combine historical + cache data, sorted by date
@@ -688,26 +648,12 @@ function getUsageData() {
             defaultData.today.messages = liveStats.messages;
             defaultData.today.tokens = liveStats.tokens;
             defaultData.today.cost = liveStats.cost;
-            // Mark today as active for streak calculation
-            if (liveStats.messages > 0) {
-                daysWithActivity.add(todayStr);
-            }
             // Also update today in dailyHistory if present
             const todayInHistory = defaultData.dailyHistory.find(d => d.date === todayStr);
             if (todayInHistory) {
                 todayInHistory.messages = liveStats.messages;
                 todayInHistory.tokens = liveStats.tokens;
                 todayInHistory.cost = liveStats.cost;
-            }
-            else {
-                // Today not in history yet - add it
-                defaultData.dailyHistory.push({
-                    date: todayStr,
-                    messages: liveStats.messages,
-                    tokens: liveStats.tokens,
-                    cost: liveStats.cost
-                });
-                defaultData.dailyHistory.sort((a, b) => a.date.localeCompare(b.date));
             }
         }
         // === LAST 14 DAYS CALCULATION ===
@@ -730,21 +676,18 @@ function getUsageData() {
             defaultData.last14Days.avgDayMessages = Math.round(sum14Messages / 14);
             defaultData.last14Days.avgDayTokens = Math.round(sum14Tokens / 14);
         }
-        // === MERGE FORGE ACTIVE DATES (if available) ===
+        // Supplement daysWithActivity from SQLite (covers days missing from stale stats-cache)
+        // getAllModelUsage() returns [] safely when DB isn't ready — no dbInitialized gate needed
         try {
-            const forgeDatesPath = path.join(os.homedir(), '.claude', 'forge-active-dates.json');
-            if (fs.existsSync(forgeDatesPath)) {
-                const forgeData = JSON.parse(fs.readFileSync(forgeDatesPath, 'utf8'));
-                if (forgeData.activeDates && Array.isArray(forgeData.activeDates)) {
-                    for (const date of forgeData.activeDates) {
-                        daysWithActivity.add(date);
-                    }
-                }
+            for (const record of (0, database_1.getAllModelUsage)()) {
+                if (record.date)
+                    daysWithActivity.add(record.date);
             }
         }
-        catch (e) {
-            // Ignore errors reading Forge dates
-        }
+        catch (_e) { /* non-fatal */ }
+        // Also mark today if live stats were scanned this session
+        if (liveStats && liveStats.date)
+            daysWithActivity.add(liveStats.date);
         // === STREAK CALCULATION ===
         // Count consecutive days with activity, allowing today to be missing (cache may not be updated yet)
         let streak = 0;
@@ -908,17 +851,15 @@ function formatModelName(name) {
     if (!name)
         return 'Unknown';
     const lower = name.toLowerCase();
-    if (lower.includes('opus') && (lower.includes('4-6') || lower.includes('4.6')))
-        return 'Opus 4.6';
-    if (lower.includes('opus'))
-        return 'Opus 4.5';
-    if (lower.includes('sonnet') && (lower.includes('4-6') || lower.includes('4.6')))
-        return 'Sonnet 4.6';
-    if (lower.includes('sonnet'))
-        return 'Sonnet 4.5';
-    if (lower.includes('haiku'))
-        return 'Haiku';
-    return name.length > 15 ? name.substring(0, 15) + '...' : name;
+    let family = '';
+    if (lower.includes('opus')) family = 'Opus';
+    else if (lower.includes('sonnet')) family = 'Sonnet';
+    else if (lower.includes('haiku')) family = 'Haiku';
+    else return name.length > 15 ? name.substring(0, 15) + '...' : name;
+    const versionMatch = lower.match(/(\d+)-(\d+)/);
+    if (versionMatch)
+        return `${family} ${versionMatch[1]}.${versionMatch[2]}`;
+    return family;
 }
 function getModelColor(name) {
     if (!name)

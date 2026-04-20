@@ -84,6 +84,11 @@ async function activate(context) {
                 // 'Skip' or dismiss: prompt flag stays set, won't ask again
             }, 5000);
         }
+        // Refresh dashboard now that DB is ready so streak/history use SQLite dates
+        if (dashboardProvider)
+            dashboardProvider.refresh();
+        if (statusBarManager)
+            statusBarManager.refresh();
     }).catch(err => {
         console.error('Failed to initialize database:', err);
     });
@@ -263,11 +268,11 @@ async function activate(context) {
             cancellable: false
         }, () => {
             return new Promise((resolve) => {
-                // Resolve Node.js binary: try 'node' sibling of process.execPath, then PATH fallback
-                const execDir = require('path').dirname(process.execPath);
-                const siblingNode = require('path').join(execDir, 'node');
-                const nodePath = require('fs').existsSync(siblingNode) ? siblingNode : 'node';
-                execFile(nodePath, [scriptPath], { timeout: 120000, maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
+                // Use 'node' from system PATH. Note: process.execPath returns Code.exe
+                // in VS Code's extension host, not Node.js, so we must use PATH lookup.
+                // Users need Node.js installed (standard for VS Code extension users).
+                const nodePath = 'node';
+                execFile(nodePath, [scriptPath], { timeout: 30000 }, (error, stdout, stderr) => {
                     if (error) {
                         vscode.window.showErrorMessage(`Scan failed: ${error.message}`);
                         resolve();
@@ -292,6 +297,24 @@ async function activate(context) {
     }));
     // Initial status bar update (fast - uses cached data only)
     statusBarManager.refresh();
+    // Immediately seed live stats from last scan file so dashboard doesn't show 0 on first load
+    try {
+        const _fs = require('fs');
+        const _os = require('os');
+        const _path = require('path');
+        const livePath = _path.join(_os.homedir(), '.claude', 'live-today-stats.json');
+        if (_fs.existsSync(livePath)) {
+            const cached = JSON.parse(_fs.readFileSync(livePath, 'utf8'));
+            const now = new Date();
+            const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+            if (cached.date === todayStr) {
+                (0, dataProvider_1.setLiveStats)(cached);
+                dashboardProvider.refresh();
+                statusBarManager.refresh();
+            }
+        }
+    }
+    catch (_e) { /* non-fatal */ }
     // Auto-scan today's stats on startup (after a short delay to not block activation)
     setTimeout(() => {
         vscode.commands.executeCommand('claudeUsage.refreshLiveStats');

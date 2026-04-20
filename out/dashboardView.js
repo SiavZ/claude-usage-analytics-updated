@@ -410,7 +410,7 @@ class DashboardViewProvider {
                         <div class="chart-toggle">
                             <button class="toggle-btn ${this._chartView === 'messages' ? 'active' : ''}" data-view="messages" style="--toggle-color: #ff8800" title="Messages">💬</button>
                             <button class="toggle-btn ${this._chartView === 'cost' ? 'active' : ''}" data-view="cost" style="--toggle-color: #2ed573" title="Cost">💵</button>
-                            <button class="toggle-btn ${this._chartView === 'tokens' ? 'active' : ''}" data-view="tokens" style="--toggle-color: #3498db" title="Tokens">🔢</button>
+                            <button class="toggle-btn ${this._chartView === 'tokens' ? 'active' : ''}" data-view="tokens" style="--toggle-color: #3498db" title="Tokens">🪙</button>
                         </div>
                     </div>
                     <div class="chart-container">${barChart}</div>
@@ -641,7 +641,7 @@ class DashboardViewProvider {
                     </div>
                     <div class="info-row">
                         <span>📈 Longest Session</span>
-                        <span class="info-value">${this.formatNumber(data.funStats.longestSessionMessages)} msgs</span>
+                        <span class="info-value">${this.formatNumber(data.funStats.longestSessionMessages)} msg${data.funStats.longestSessionMessages === 1 ? '' : 's'}</span>
                     </div>
                     <div class="info-row">
                         <span>🦉 Night Owl</span>
@@ -731,7 +731,7 @@ class DashboardViewProvider {
             'Week Streak': '🔥',
             'Month Streak': '🔥',
             'Cache Master': '💰',
-            'Token Titan (1B+)': '🔢',
+            'Token Titan (1B+)': '🪙',
             '$1K Club': '💵',
             '$5K Spender': '💎',
             '$10K Whale': '👑',

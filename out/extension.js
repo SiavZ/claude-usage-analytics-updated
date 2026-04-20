@@ -272,7 +272,7 @@ async function activate(context) {
                 // in VS Code's extension host, not Node.js, so we must use PATH lookup.
                 // Users need Node.js installed (standard for VS Code extension users).
                 const nodePath = 'node';
-                execFile(nodePath, [scriptPath], { timeout: 30000 }, (error, stdout, stderr) => {
+                execFile(nodePath, [scriptPath], { timeout: 60000 }, (error, stdout, stderr) => {
                     if (error) {
                         vscode.window.showErrorMessage(`Scan failed: ${error.message}`);
                         resolve();

@@ -8,3 +8,4 @@ conversation-stats-cache.json
 forge-active-dates.json
 live-today-stats.json
 stats-cache.json
+/.playwright-mcp
